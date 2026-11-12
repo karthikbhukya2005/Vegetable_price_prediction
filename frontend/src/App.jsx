@@ -39,6 +39,7 @@ const sections = [
   "Model Performance",
   "HMM Regimes",
   "Ablation Study",
+  "Forecast Accuracy & Research Comparison",
 ];
 
 // Available vegetables
@@ -744,6 +745,236 @@ function HMMRegimeChart({ rows, vegetable }) {
 }
 
 
+
+function AccuracyResearchComparison({ vegetable, horizon }) {
+  const [summary, setSummary] = useState(null);
+  const [comparison, setComparison] = useState(null);
+  const [research, setResearch] = useState(null);
+  const [predictionRows, setPredictionRows] = useState([]);
+  const [selectedModel, setSelectedModel] = useState("HMM_GRU");
+  const [requestError, setRequestError] = useState("");
+  const [requestLoading, setRequestLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setRequestLoading(true);
+    setRequestError("");
+
+    Promise.all([
+      api.get("/accuracy/summary", { params: { vegetable, horizon } }),
+      api.get("/accuracy/comparison", { params: { vegetable, horizon } }),
+      api.get("/accuracy/research-benchmarks", { params: { vegetable, horizon } }),
+      api.get("/accuracy/predictions", { params: { vegetable, horizon, model: selectedModel } }),
+    ]).then(([summaryResponse, comparisonResponse, researchResponse, predictionResponse]) => {
+      if (!active) return;
+      setSummary(summaryResponse.data);
+      setComparison(comparisonResponse.data);
+      setResearch(researchResponse.data);
+      setPredictionRows(predictionResponse.data.data || []);
+    }).catch((err) => {
+      if (!active) return;
+      setRequestError(err.response?.data?.detail || "Could not load accuracy comparison data. Check the backend and prediction CSV files.");
+      setSummary(null);
+      setComparison(null);
+      setResearch(null);
+      setPredictionRows([]);
+    }).finally(() => {
+      if (active) setRequestLoading(false);
+    });
+
+    return () => { active = false; };
+  }, [vegetable, horizon, selectedModel]);
+
+  const metricCards = [
+    { title: "Best MAE", item: summary?.best_mae, suffix: "price units", icon: Activity },
+    { title: "Best RMSE", item: summary?.best_rmse, suffix: "price units", icon: BarChart3 },
+    { title: "Best MAPE", item: summary?.best_mape, suffix: "%", icon: TrendingUp },
+  ];
+
+  const metricNames = ["MAE", "RMSE", "MAPE"];
+  const metricRows = comparison?.metric_comparison || [];
+  const horizonRows = comparison?.horizon_vs_rmse || [];
+  const commodityRows = comparison?.commodity_comparison || [];
+  const researchRows = research?.comparison_table || [];
+  const predictionChartRows = predictionRows.map((row) => ({
+    date: row.date,
+    actual: row.actual,
+    predicted: row.predicted,
+  })).filter((row) => Number.isFinite(Number(row.actual)) && Number.isFinite(Number(row.predicted)));
+
+  if (requestLoading && !summary && !comparison) {
+    return <div className="loading">Calculating and loading forecast accuracy metrics...</div>;
+  }
+
+  return (
+    <>
+      <div className="warning data-simulation-notice">
+        <strong>Synthetic-data disclosure:</strong> Project evaluation uses synthetic/simulated vegetable price and weather data. These metrics describe performance on the generated dataset and are not verified real-market forecasting results.
+      </div>
+
+      {requestError && <div className="error">{requestError}</div>}
+
+      <section>
+        <div className="section-head">
+          <div>
+            <h3>Forecast Accuracy Overview</h3>
+            <p className="muted">{vegetable.toUpperCase()} · {horizon}-week-ahead held-out test evaluation. Lower MAE, RMSE and MAPE indicate smaller errors.</p>
+          </div>
+          <span>{summary?.total_models_evaluated ?? 0} model rows</span>
+        </div>
+        <div className="cards">
+          {metricCards.map(({ title, item, suffix, icon }) => (
+            <StatCard key={title} title={title} value={item?.value == null ? "N/A" : Number(item.value).toFixed(3)} subtitle={item?.model ? `Best model: ${item.model} · ${suffix}` : "No verified result available"} icon={icon} />
+          ))}
+          <StatCard title="Best by RMSE" value={summary?.best_model?.model || "N/A"} subtitle={summary?.best_model?.rmse == null ? "No verified result available" : `RMSE: ${Number(summary.best_model.rmse).toFixed(3)}`} icon={BrainCircuit} />
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <div>
+            <h3>Model Accuracy Comparison</h3>
+            <p className="muted">Metrics are calculated from aligned test-set prediction files in the original price scale.</p>
+          </div>
+        </div>
+        {comparison?.table?.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE (%)</th><th>Overall Rank</th><th>MAE Rank</th><th>RMSE Rank</th><th>MAPE Rank</th></tr></thead>
+              <tbody>
+                {comparison.table.map((row) => (
+                  <tr key={row.Model} style={row.is_best ? { background: "#effaf2", fontWeight: 700 } : undefined}>
+                    <td>{row.Model}{row.is_best ? <span className="badge-best">Best RMSE</span> : null}</td>
+                    <td>{row.MAE}</td><td>{row.RMSE}</td><td>{row.MAPE}</td>
+                    <td>{row.Rank}</td><td>{row.Rank_MAE}</td><td>{row.Rank_RMSE}</td><td>{row.Rank_MAPE}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <div className="empty">No accuracy metrics are available for this vegetable and horizon yet. Run the experiment pipeline to generate test predictions.</div>}
+      </section>
+
+      <section>
+        <h3>Metric-wise Model Comparison</h3>
+        <div className="charts-grid-3">
+          {metricNames.map((metric) => (
+            <div className="ablation-chart-panel" key={metric}>
+              <h3>{metric} (lower is better)</h3>
+              <div className="chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={metricRows} margin={{ top: 10, right: 8, left: 0, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="model" angle={-25} textAnchor="end" interval={0} height={55} />
+                    <YAxis />
+                    <Tooltip formatter={(value) => Number(value).toFixed(3)} />
+                    <Bar dataKey={metric} name={metric} fill="#3978cf" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3>Forecast Horizon vs RMSE</h3>
+        <p className="muted">How error changes as the forecast horizon increases for {vegetable.toUpperCase()}.</p>
+        <div className="chart large">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={horizonRows}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="horizon" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {["Naive", "ARIMA", "XGBoost", "LSTM", "GRU", "HMM-GRU"].map((model, index) => (
+                <Line key={model} type="monotone" dataKey={model} name={model} stroke={["#64748b", "#d97706", "#16a34a", "#8b5cf6", "#2563eb", "#dc2626"][index]} connectNulls dot={{ r: 3 }} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      <section>
+        <h3>Commodity-wise RMSE Comparison</h3>
+        <p className="muted">Compare Tomato, Onion and Potato at the selected {horizon}-week horizon. Values are in the project's price units.</p>
+        <div className="chart large">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={commodityRows}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="model" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="Tomato" fill="#dc6b57" />
+              <Bar dataKey="Onion" fill="#8b78c6" />
+              <Bar dataKey="Potato" fill="#d5a441" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <div>
+            <h3>Actual vs Predicted Test Prices</h3>
+            <p className="muted">Timestamp-aligned out-of-sample predictions for {vegetable.toUpperCase()} · {horizon} weeks.</p>
+          </div>
+          <label className="control-label">MODEL
+            <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+              <option value="Naive">Naive</option><option value="ARIMA">ARIMA</option><option value="XGBoost">XGBoost</option><option value="LSTM">LSTM</option><option value="GRU">GRU</option><option value="HMM_GRU">HMM-GRU</option>
+            </select>
+          </label>
+        </div>
+        {predictionChartRows.length ? (
+          <>
+            <div className="chart large">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={predictionChartRows}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" minTickGap={35} />
+                  <YAxis />
+                  <Tooltip formatter={(value) => money(value)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="actual" name="Actual test price" stroke="#26966f" strokeWidth={2.3} dot={false} />
+                  <Line type="monotone" dataKey="predicted" name={selectedModel === "HMM_GRU" ? "HMM-GRU prediction" : `${selectedModel} prediction`} stroke="#3978cf" strokeWidth={2.3} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="muted">MAE: {predictionRows.metrics?.MAE ?? "N/A"} · RMSE: {predictionRows.metrics?.RMSE ?? "N/A"} · MAPE: {predictionRows.metrics?.MAPE ?? "N/A"}</p>
+          </>
+        ) : <div className="empty">No aligned test predictions available for {selectedModel}.</div>}
+      </section>
+
+      <section className="research-section">
+        <h3>Comparison with Published Research</h3>
+        <p className="muted">Project metrics and published-paper metrics are displayed in separate categories. Cross-study values are contextual, not direct like-for-like rankings.</p>
+        <div className="research-meta">
+          <h4>Reference Paper 1 — TOP HMM-based Deep Learning (2024)</h4>
+          Test-set benchmarks for GRU, HM-GRU and the paper's best hybrid model. The paper uses a different dataset and evaluation protocol.
+        </div>
+        <Table rows={researchRows} />
+        <div className="research-meta">
+          <h4>Reference Paper 2 — Retail Price Rise Forecasting (2024)</h4>
+          Monthly CPI/WPI index MAPE benchmarks; these are contextual and not directly equivalent to this project's weekly price-series metrics.
+        </div>
+        <Table rows={(research?.reference_paper_2 || []).filter((row) => String(row.Vegetable).toLowerCase() === vegetable)} />
+        <div className="research-meta">
+          <h4>Reference Paper 3 — TOP Price Dynamics (2024)</h4>
+          {research?.reference_paper_3?.Note || "GARCH-based volatility research; not a direct MAE/RMSE/MAPE forecasting benchmark."}
+        </div>
+        <div className="research-meta">
+          <h4>Reference Paper 4 — HMM Multi-horizon Preprint (2024)</h4>
+          Preprint benchmark. The commodity/series identity is not assigned here unless verified in the source.
+        </div>
+        <Table rows={research?.reference_paper_4_preprint || []} />
+        <div className="warning">{research?.notice || "Differences in dataset, frequency, test period and evaluation protocol limit direct cross-paper comparisons."}</div>
+      </section>
+    </>
+  );
+}
+
 // Main application
 export default function App() {
   const [section, setSection] = useState("Overview");
@@ -973,6 +1204,7 @@ export default function App() {
     Activity,
     BrainCircuit,
     FlaskConical,
+    BarChart3,
   ];
 
   return (
@@ -1359,6 +1591,11 @@ export default function App() {
 
                 <AblationComparison rows={ablation} vegetable={vegetable} horizon={horizon} />
               </section>
+            )}
+
+            {/* ================= FORECAST ACCURACY & RESEARCH COMPARISON ================= */}
+            {section === "Forecast Accuracy & Research Comparison" && (
+              <AccuracyResearchComparison vegetable={vegetable} horizon={horizon} />
             )}
 
           </>
