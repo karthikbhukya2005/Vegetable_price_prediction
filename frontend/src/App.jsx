@@ -750,7 +750,7 @@ function AccuracyResearchComparison({ vegetable, horizon }) {
   const [summary, setSummary] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [research, setResearch] = useState(null);
-  const [predictionRows, setPredictionRows] = useState([]);
+  const [predictionPayload, setPredictionPayload] = useState({ data: [], metrics: null });
   const [selectedModel, setSelectedModel] = useState("HMM_GRU");
   const [requestError, setRequestError] = useState("");
   const [requestLoading, setRequestLoading] = useState(false);
@@ -770,14 +770,14 @@ function AccuracyResearchComparison({ vegetable, horizon }) {
       setSummary(summaryResponse.data);
       setComparison(comparisonResponse.data);
       setResearch(researchResponse.data);
-      setPredictionRows(predictionResponse.data.data || []);
+      setPredictionPayload(predictionResponse.data || { data: [], metrics: null });
     }).catch((err) => {
       if (!active) return;
       setRequestError(err.response?.data?.detail || "Could not load accuracy comparison data. Check the backend and prediction CSV files.");
       setSummary(null);
       setComparison(null);
       setResearch(null);
-      setPredictionRows([]);
+      setPredictionPayload({ data: [], metrics: null });
     }).finally(() => {
       if (active) setRequestLoading(false);
     });
@@ -796,7 +796,7 @@ function AccuracyResearchComparison({ vegetable, horizon }) {
   const horizonRows = comparison?.horizon_vs_rmse || [];
   const commodityRows = comparison?.commodity_comparison || [];
   const researchRows = research?.comparison_table || [];
-  const predictionChartRows = predictionRows.map((row) => ({
+  const predictionChartRows = (predictionPayload.data || []).map((row) => ({
     date: row.date,
     actual: row.actual,
     predicted: row.predicted,
@@ -942,7 +942,7 @@ function AccuracyResearchComparison({ vegetable, horizon }) {
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            <p className="muted">MAE: {predictionRows.metrics?.MAE ?? "N/A"} · RMSE: {predictionRows.metrics?.RMSE ?? "N/A"} · MAPE: {predictionRows.metrics?.MAPE ?? "N/A"}</p>
+            <p className="muted">MAE: {predictionPayload.metrics?.MAE ?? "N/A"} · RMSE: {predictionPayload.metrics?.RMSE ?? "N/A"} · MAPE: {predictionPayload.metrics?.MAPE ?? "N/A"}</p>
           </>
         ) : <div className="empty">No aligned test predictions available for {selectedModel}.</div>}
       </section>
