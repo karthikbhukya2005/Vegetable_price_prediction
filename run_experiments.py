@@ -464,6 +464,10 @@ def run_all():
         fig.savefig(ABLATION_PLOTS_DIR / f"{comm.lower()}_ablation_rmse.png", dpi=200)
         plt.close(fig)
 
+    # Refresh the dashboard accuracy cache from newly generated test predictions.
+    from src.accuracy_metrics import compute_and_save_accuracy_comparison
+    compute_and_save_accuracy_comparison()
+
     print("\nAll plots and tables successfully generated and saved!")
     return df_all_metrics, df_ablation
 
